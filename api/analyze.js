@@ -1,4 +1,3 @@
-cat > /mnt/user-data/outputs/analyze.js << 'ENDOFFILE'
 // api/analyze.js — Vercel Serverless Function
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -41,30 +40,38 @@ export default async function handler(req, res) {
 
     const raw = data.content[0].text;
 
-    // Parser robusto — tenta 3 formas
+    // Tenta extrair JSON de várias formas
     let parsed = null;
+    let parseError = null;
 
-    try { parsed = JSON.parse(raw); } catch (_) {}
-
-    if (!parsed) {
+    // Tentativa 1: JSON puro
+    try {
+      parsed = JSON.parse(raw);
+    } catch (e1) {
+      // Tentativa 2: remove markdown ```json ... ```
       try {
-        const clean = raw.replace(/```json/gi, "").replace(/```/g, "").trim();
+        const clean = raw.replace(/^```json\s*/i, "").replace(/\s*```$/i, "").trim();
         parsed = JSON.parse(clean);
-      } catch (_) {}
+      } catch (e2) {
+        // Tentativa 3: extrai primeiro { ... } do texto
+        try {
+          const match = raw.match(/\{[\s\S]*\}/);
+          if (match) parsed = JSON.parse(match[0]);
+        } catch (e3) {
+          parseError = e3.message;
+        }
+      }
     }
 
-    if (!parsed) {
-      try {
-        const match = raw.match(/\{[\s\S]*\}/);
-        if (match) parsed = JSON.parse(match[0]);
-      } catch (_) {}
+    // Se conseguiu parsear, devolve o objeto já parseado
+    if (parsed) {
+      return res.status(200).json({ text: raw, parsed });
     }
 
-    return res.status(200).json({ text: raw, parsed: parsed || null });
+    // Se não conseguiu parsear mas é copy (texto livre), devolve o texto
+    return res.status(200).json({ text: raw });
 
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
 }
-ENDOFFILE
-echo "Feito"
