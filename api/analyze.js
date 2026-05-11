@@ -1,15 +1,18 @@
+cat > /mnt/user-data/outputs/analyze.js << 'ENDOFFILE'
 // api/analyze.js — Vercel Serverless Function
-// A chave de API fica aqui no servidor, nunca exposta ao navegador
-
 export default async function handler(req, res) {
-  // Só aceita POST
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  if (req.method === "OPTIONS") return res.status(200).end();
+
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Método não permitido" });
   }
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    return res.status(500).json({ error: "API key não configurada no servidor" });
+    return res.status(500).json({ error: "API key não configurada" });
   }
 
   try {
@@ -36,8 +39,32 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: data.error.message });
     }
 
-    return res.status(200).json({ text: data.content[0].text });
+    const raw = data.content[0].text;
+
+    // Parser robusto — tenta 3 formas
+    let parsed = null;
+
+    try { parsed = JSON.parse(raw); } catch (_) {}
+
+    if (!parsed) {
+      try {
+        const clean = raw.replace(/```json/gi, "").replace(/```/g, "").trim();
+        parsed = JSON.parse(clean);
+      } catch (_) {}
+    }
+
+    if (!parsed) {
+      try {
+        const match = raw.match(/\{[\s\S]*\}/);
+        if (match) parsed = JSON.parse(match[0]);
+      } catch (_) {}
+    }
+
+    return res.status(200).json({ text: raw, parsed: parsed || null });
+
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
 }
+ENDOFFILE
+echo "Feito"
