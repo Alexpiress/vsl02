@@ -63,7 +63,7 @@ export default async function handler(req, res) {
       }
     }
 
-    // Se conseguiu parsear, devolve o objeto já parseado
+    //  Se conseguiu parsear, devolve o objeto já parseado
     if (parsed) {
       return res.status(200).json({ text: raw, parsed });
     }
