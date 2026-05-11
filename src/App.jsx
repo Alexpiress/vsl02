@@ -1,6 +1,5 @@
 import { useState, useRef } from "react";
 
-// ── TOKENS ───────────────────────────────────────────────
 const T = {
   bg:"#0A0A0F", surface:"#12121A", card:"#1A1A28", border:"#2A2A40",
   accent:"#7C5CFC", accentB:"#5B3FD4", gold:"#F5C842", red:"#FF4D6D",
@@ -40,10 +39,11 @@ async function callAPI(system, userContent, max_tokens = 1000) {
   });
   const data = await res.json();
   if (data.error) throw new Error(data.error);
+  // Usa parsed se o backend já parseou, senão usa o texto
+  if (data.parsed) return data.parsed;
   return data.text;
 }
 
-// userContent pode ser string ou array (multimodal com imagem)
 async function callAPIMultimodal(system, messages, max_tokens = 1000) {
   const res = await fetch("/api/analyze", {
     method: "POST",
@@ -52,10 +52,13 @@ async function callAPIMultimodal(system, messages, max_tokens = 1000) {
   });
   const data = await res.json();
   if (data.error) throw new Error(data.error);
+  if (data.parsed) return data.parsed;
   return data.text;
 }
 
 function parseJSON(raw) {
+  // Se já é objeto (veio parsed do backend), retorna direto
+  if (typeof raw === "object" && raw !== null) return raw;
   try { return JSON.parse(raw.replace(/```json|```/g, "").trim()); }
   catch {
     const m = raw.match(/\{[\s\S]*\}/);
@@ -64,7 +67,6 @@ function parseJSON(raw) {
   }
 }
 
-// Converte File para base64
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -74,7 +76,6 @@ function fileToBase64(file) {
   });
 }
 
-// ── CSS ───────────────────────────────────────────────────
 const CSS = `
   *{box-sizing:border-box;margin:0;padding:0;}
   body{background:#0A0A0F;}
@@ -93,7 +94,6 @@ const CSS = `
     border:1px solid #2A2A40;display:block;}
 `;
 
-// ── HELPERS DE ESTILO ─────────────────────────────────────
 const mk = {
   card: (extra={}) => ({
     background:T.card, border:`1px solid ${T.border}`,
@@ -156,7 +156,6 @@ const mk = {
   },
 };
 
-// ── COMPONENTE: UPLOAD DE IMAGEM ──────────────────────────
 function ImageUpload({ value, onChange, label, hint }) {
   const inputRef = useRef();
   const [over, setOver] = useState(false);
@@ -207,7 +206,6 @@ function ImageUpload({ value, onChange, label, hint }) {
   );
 }
 
-// ── COMPONENTE: CARD ENNEAGRAMA ───────────────────────────
 function EnneaCard({ tipo, label, evidencias, bigIdeia }) {
   const e = ENNEAGRAM[tipo];
   if (!e) return null;
@@ -243,34 +241,22 @@ function EnneaCard({ tipo, label, evidencias, bigIdeia }) {
   );
 }
 
-// ══════════════════════════════════════════════════════════
-// APP
-// ══════════════════════════════════════════════════════════
 export default function App() {
-  // VSL inputs
   const [modoVSL, setModoVSL]       = useState("texto");
   const [vslTexto, setVslTexto]     = useState("");
   const [vslLink, setVslLink]       = useState("");
-
-  // Produto inputs
   const [prodNome, setProdNome]     = useState("");
   const [prodURL, setProdURL]       = useState("");
-  const [prodPrint, setProdPrint]   = useState(null);   // { file, url }
+  const [prodPrint, setProdPrint]   = useState(null);
   const [prodExtra, setProdExtra]   = useState("");
-
-  // Análise
   const [analise, setAnalise]       = useState(null);
   const [caesp, setCAESP]           = useState(null);
   const [caminho, setCaminho]       = useState(null);
   const [enneaDest, setEnneaDest]   = useState(null);
   const [formato, setFormato]       = useState(null);
-
-  // Output
   const [copyGerada, setCopyGerada] = useState("");
   const [versoes, setVersoes]       = useState([]);
   const [copiado, setCopiado]       = useState(false);
-
-  // UI
   const [fase, setFase]             = useState(1);
   const [loading, setLoading]       = useState(false);
   const [loadMsg, setLoadMsg]       = useState("");
@@ -289,7 +275,6 @@ export default function App() {
     setCaminho(null); setEnneaDest(null); setFormato(null);
   }
 
-  // ── ANALISAR ─────────────────────────────────────────
   async function analisar() {
     setErro("");
     const transcricao = modoVSL === "link" ? `[Link YouTube: ${vslLink}]` : vslTexto;
@@ -301,7 +286,6 @@ export default function App() {
     setLoading(true); setFase(2);
 
     try {
-      // 1. Tenta ler o site por URL
       setLoadMsg("Lendo site do produto...");
       let siteTexto = "";
       try {
@@ -310,7 +294,6 @@ export default function App() {
         siteTexto = d.contents?.replace(/<[^>]+>/g," ").replace(/\s+/g," ").slice(0,2500) || "";
       } catch { siteTexto = ""; }
 
-      // 2. Se tem print, converte para base64
       let printBase64 = null;
       let printMediaType = "image/jpeg";
       if (prodPrint?.file) {
@@ -319,13 +302,11 @@ export default function App() {
         printMediaType = prodPrint.file.type || "image/jpeg";
       }
 
-      // 3. Monta conteúdo do site para o prompt
       const siteConteudo = [
         siteTexto ? `TEXTO EXTRAÍDO DO SITE:\n${siteTexto}` : "",
         prodExtra ? `INFORMAÇÕES EXTRAS:\n${prodExtra}` : "",
       ].filter(Boolean).join("\n\n");
 
-      // 4. Monta mensagem — com ou sem imagem
       setLoadMsg("Analisando Enneagrama, Big Idea e estrutura C.A.E.S.P.+...");
 
       const systemPrompt = `Você é especialista em copywriting direto e psicologia do Enneagrama.
@@ -334,35 +315,34 @@ Analise o conteúdo fornecido e retorne APENAS JSON válido, sem markdown, sem t
       const jsonSchema = `{
   "tipoVSL": <número 1-9>,
   "evidVSL": "<2-3 evidências do texto da VSL que provam o tipo Enneagrama>",
-  "bigIdeiaVSL": "<A Big Idea central da VSL em 1-2 frases. Big Idea = promessa única + mecanismo + para quem>",
+  "bigIdeiaVSL": "<A Big Idea central da VSL em 1-2 frases>",
   "tipoProduto": <número 1-9>,
   "evidProduto": "<2-3 evidências do site/print que provam o tipo Enneagrama>",
   "bigIdeiaProduto": "<A Big Idea central do produto em 1-2 frases>",
-  "alinhados": <true/false — os dois Enneagramas são o mesmo ou muito próximos?>,
+  "alinhados": <true ou false>,
   "gap": "<se não alinhados: descrição do gap em 2 frases>",
   "oportunidade": "<oportunidade estratégica em 2 frases>",
   "caminhos": {
     "A": "<como aplicar mantendo Enneagrama da VSL — 2 frases>",
     "B": "<como aplicar mantendo Enneagrama do produto — 2 frases>",
-    "C": "<tipo ponte sugerido (mencione o número) e justificativa — 2 frases>"
+    "C": "<tipo ponte sugerido e justificativa — 2 frases>"
   },
   "caesp": {
     "cena": "<cena de abertura identificada>",
-    "acao": "<ação e queda — o erro inocente>",
+    "acao": "<ação e queda>",
     "espelho": "<espelho coletivo>",
     "solucao": "<solução apresentada>",
     "promessa": "<promessa dupla>",
-    "objecao": "<objeção tratada ou implícita>",
-    "urgencia": "<urgência usada ou implícita>",
-    "mecanismo": "<mecanismo central do produto da VSL>",
-    "personagem": "<perfil do narrador/personagem>"
+    "objecao": "<objeção tratada>",
+    "urgencia": "<urgência usada>",
+    "mecanismo": "<mecanismo central>",
+    "personagem": "<perfil do narrador>"
   }
 }`;
 
       let rawAnalise;
 
       if (printBase64) {
-        // Mensagem multimodal com imagem
         const userMessages = [
           {
             type: "image",
@@ -379,6 +359,7 @@ Analise o conteúdo fornecido e retorne APENAS JSON válido, sem markdown, sem t
         rawAnalise = await callAPI(systemPrompt, userText, 1000);
       }
 
+      // parseJSON agora aceita objeto ou string
       const dados = parseJSON(rawAnalise);
       setAnalise(dados);
       setCAESP(dados.caesp);
@@ -391,7 +372,6 @@ Analise o conteúdo fornecido e retorne APENAS JSON válido, sem markdown, sem t
     }
   }
 
-  // ── GERAR COPY ───────────────────────────────────────
   async function gerarCopy(novaVersao = false) {
     if (!formato) return setErro("Escolha o formato da copy.");
     if (!analise?.alinhados && !caminho) return setErro("Escolha o caminho para fechar o gap.");
@@ -406,7 +386,7 @@ Analise o conteúdo fornecido e retorne APENAS JSON válido, sem markdown, sem t
         ? `CAMINHO ESCOLHIDO: ${caminho} — ${
             caminho==="A" ? `Manter Enn. Tipo ${analise.tipoVSL} da VSL`
           : caminho==="B" ? `Manter Enn. Tipo ${analise.tipoProduto} do produto`
-          : `Usar Enneagrama ponte (ver análise)`
+          : `Usar Enneagrama ponte`
           }\nESTRATÉGIA: ${analise.caminhos?.[caminho]||""}`
         : "VSL e produto alinhados — use a sinergia diretamente.";
 
@@ -414,10 +394,9 @@ Analise o conteúdo fornecido e retorne APENAS JSON válido, sem markdown, sem t
 
       const user = `PRODUTO: ${prodNome} | URL: ${prodURL}
 INFORMAÇÕES EXTRAS: ${prodExtra||"Nenhuma"}
-
 BIG IDEA DO PRODUTO: ${analise.bigIdeiaProduto}
 
-ESTRUTURA C.A.E.S.P.+ DA VSL DE REFERÊNCIA (transplante para o produto):
+ESTRUTURA C.A.E.S.P.+ DA VSL DE REFERÊNCIA:
 • Cena: ${caesp?.cena}
 • Ação/Queda: ${caesp?.acao}
 • Espelho: ${caesp?.espelho}
@@ -430,20 +409,18 @@ ESTRUTURA C.A.E.S.P.+ DA VSL DE REFERÊNCIA (transplante para o produto):
 
 ENNEAGRAMA DE DESTINO: Tipo ${tipoFinal} — ${en?.nome}
 Driver: ${en?.driver}
-Gatilhos que ativam esse tipo: ${en?.gatilho}
+Gatilhos: ${en?.gatilho}
 
 ${caminhoCtx}
 
 FORMATO: ${fmt?.label} (${fmt?.desc})
-${novaVersao ? "ATENÇÃO: Esta é uma nova versão. Varie a cena de abertura e o personagem, mas mantenha a estrutura C.A.E.S.P.+ e o Enneagrama." : ""}
+${novaVersao ? "NOVA VERSÃO: varie a cena de abertura, mantenha estrutura e Enneagrama." : ""}
 
 INSTRUÇÕES:
-- Escreva em português brasileiro
-- Tom par-a-par, confissão pessoal, narrativa real
-- Siga rigorosamente a estrutura C.A.E.S.P.+ adaptada ao novo produto
-- Para Mini VSL e Criativo Social: inclua indicações de cena entre [colchetes]
-- Para VSL Completa: divida em blocos nomeados (CENA, AÇÃO, ESPELHO, SOLUÇÃO, PROMESSA, OBJEÇÃO, CTA)
-- A Big Idea do produto deve estar presente, implícita ou explicitamente, na copy
+- Português brasileiro, tom par-a-par, confissão pessoal
+- Siga C.A.E.S.P.+ adaptado ao produto
+- Mini VSL e Social: indicações de cena entre [colchetes]
+- VSL Completa: blocos nomeados (CENA, AÇÃO, ESPELHO, SOLUÇÃO, PROMESSA, OBJEÇÃO, CTA)
 - ESCREVA APENAS A COPY`;
 
       const raw = await callAPI(system, user, 1000);
@@ -463,32 +440,25 @@ INSTRUÇÕES:
     }
   }
 
-  // ── RENDER ───────────────────────────────────────────
   return (
     <div style={{ minHeight:"100vh", background:T.bg, color:T.text, fontFamily:"Georgia,serif" }}>
       <style>{CSS}</style>
 
-      {/* HEADER */}
       <div style={{ background:`linear-gradient(135deg,${T.surface},#0D0D1A)`,
         borderBottom:`1px solid ${T.border}`, padding:"20px 28px",
         display:"flex", alignItems:"center", gap:14 }}>
         <div style={{ width:40, height:40, borderRadius:10, flexShrink:0,
           background:`linear-gradient(135deg,${T.accent},${T.accentB})`,
-          display:"flex", alignItems:"center", justifyContent:"center", fontSize:18 }}>
-          ⚡
-        </div>
+          display:"flex", alignItems:"center", justifyContent:"center", fontSize:18 }}>⚡</div>
         <div>
-          <div style={{ fontSize:17, fontWeight:700, letterSpacing:"0.02em" }}>VSL Transplanter</div>
+          <div style={{ fontSize:17, fontWeight:700 }}>VSL Transplanter</div>
           <div style={{ fontSize:11, color:T.muted, fontFamily:"sans-serif", marginTop:2 }}>
             Engenharia reversa de copy · C.A.E.S.P.+ · Enneagrama · Big Idea
           </div>
         </div>
         {fase > 1 && (
-          <button onClick={resetar}
-            style={mk.btn("transparent", T.textSub, {
-              border:`1px solid ${T.border}`, marginLeft:"auto",
-              padding:"8px 18px", fontSize:12
-            })}>
+          <button onClick={resetar} style={mk.btn("transparent", T.textSub,
+            { border:`1px solid ${T.border}`, marginLeft:"auto", padding:"8px 18px", fontSize:12 })}>
             ← Reiniciar
           </button>
         )}
@@ -496,10 +466,7 @@ INSTRUÇÕES:
 
       <div style={{ maxWidth:860, margin:"0 auto", padding:"32px 20px 80px" }}>
 
-        {/* ══ INPUTS ══════════════════════════════════ */}
         <div className={fase >= 1 ? "fu" : ""}>
-
-          {/* VSL */}
           <div style={mk.card()}>
             <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:18 }}>
               <div style={mk.stepNum()}>1</div>
@@ -510,16 +477,14 @@ INSTRUÇÕES:
                 </div>
               </div>
             </div>
-
             <div style={{ display:"flex", gap:10, marginBottom:14 }}>
               {["texto","link"].map(m => (
-                <button key={m} disabled={fase>1}
-                  onClick={() => setModoVSL(m)} style={mk.chip(modoVSL===m, T.accent)}>
+                <button key={m} disabled={fase>1} onClick={() => setModoVSL(m)}
+                  style={mk.chip(modoVSL===m, T.accent)}>
                   {m==="texto" ? "📝 Colar transcrição" : "▶ Link YouTube"}
                 </button>
               ))}
             </div>
-
             {modoVSL === "texto" ? (
               <>
                 <label style={mk.lbl}>Transcrição da VSL</label>
@@ -531,8 +496,7 @@ INSTRUÇÕES:
               <>
                 <label style={mk.lbl}>Link do YouTube</label>
                 <input value={vslLink} onChange={e=>setVslLink(e.target.value)}
-                  placeholder="https://www.youtube.com/watch?v=..."
-                  style={mk.inp} disabled={fase>1}/>
+                  placeholder="https://www.youtube.com/watch?v=..." style={mk.inp} disabled={fase>1}/>
                 <div style={{ fontSize:11, color:T.muted, fontFamily:"sans-serif", marginTop:6 }}>
                   ⚠ Se o link não funcionar, alterne para "Colar transcrição"
                 </div>
@@ -540,7 +504,6 @@ INSTRUÇÕES:
             )}
           </div>
 
-          {/* PRODUTO */}
           <div style={mk.card()}>
             <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:18 }}>
               <div style={mk.stepNum()}>2</div>
@@ -551,13 +514,11 @@ INSTRUÇÕES:
                 </div>
               </div>
             </div>
-
             <div style={{ display:"flex", gap:12, marginBottom:16, flexWrap:"wrap" }}>
               <div style={{ flex:1, minWidth:180 }}>
                 <label style={mk.lbl}>Nome do produto</label>
                 <input value={prodNome} onChange={e=>setProdNome(e.target.value)}
-                  placeholder="Ex: Protocolo Sono de Elite"
-                  style={mk.inp} disabled={fase>1}/>
+                  placeholder="Ex: Protocolo Sono de Elite" style={mk.inp} disabled={fase>1}/>
               </div>
               <div style={{ flex:2, minWidth:240 }}>
                 <label style={mk.lbl}>URL do site</label>
@@ -565,23 +526,16 @@ INSTRUÇÕES:
                   placeholder="https://..." style={mk.inp} disabled={fase>1}/>
               </div>
             </div>
-
-            {/* PRINT DO SITE */}
             {fase === 1 ? (
-              <ImageUpload
-                value={prodPrint}
-                onChange={setProdPrint}
+              <ImageUpload value={prodPrint} onChange={setProdPrint}
                 label="Printscreen do site (foto da tela)"
-                hint="A IA vai ler a imagem para identificar o Enneagrama e a Big Idea do produto"
-              />
+                hint="A IA vai ler a imagem para identificar o Enneagrama e a Big Idea do produto"/>
             ) : prodPrint?.url ? (
               <div style={{ marginBottom:14 }}>
                 <label style={mk.lbl}>Printscreen do site</label>
-                <img src={prodPrint.url} alt="site" className="img-thumb"
-                  style={{ maxHeight:140, objectFit:"cover" }}/>
+                <img src={prodPrint.url} alt="site" className="img-thumb" style={{ maxHeight:140 }}/>
               </div>
             ) : null}
-
             <label style={mk.lbl}>
               Informações extras{" "}
               <span style={{ color:T.muted, fontWeight:400, textTransform:"none" }}>
@@ -589,7 +543,7 @@ INSTRUÇÕES:
               </span>
             </label>
             <textarea value={prodExtra} onChange={e=>setProdExtra(e.target.value)}
-              placeholder="Adicione qualquer informação sobre o produto que ajude a IA a entender o posicionamento..."
+              placeholder="Adicione qualquer informação sobre o produto..."
               style={mk.ta(4)} disabled={fase>1}/>
           </div>
 
@@ -605,7 +559,6 @@ INSTRUÇÕES:
           )}
         </div>
 
-        {/* ══ LOADING ══════════════════════════════════ */}
         {loading && (
           <div style={{ textAlign:"center", padding:"40px 0" }} className="fu">
             <div style={{ ...mk.infoCard(T.accent), display:"inline-block", padding:"20px 44px" }}>
@@ -615,7 +568,6 @@ INSTRUÇÕES:
           </div>
         )}
 
-        {/* ══ ANÁLISE ══════════════════════════════════ */}
         {!loading && analise && fase >= 2 && (
           <div className="fu">
             <div style={mk.card()}>
@@ -631,19 +583,13 @@ INSTRUÇÕES:
                 </div>
               </div>
 
-              {/* CARDS ENNEAGRAMA + BIG IDEA */}
               <div style={{ display:"flex", gap:12, flexWrap:"wrap", marginBottom:16 }}>
-                <EnneaCard
-                  tipo={analise.tipoVSL} label="VSL de Referência"
-                  evidencias={analise.evidVSL} bigIdeia={analise.bigIdeiaVSL}
-                />
-                <EnneaCard
-                  tipo={analise.tipoProduto} label="Site do Produto"
-                  evidencias={analise.evidProduto} bigIdeia={analise.bigIdeiaProduto}
-                />
+                <EnneaCard tipo={analise.tipoVSL} label="VSL de Referência"
+                  evidencias={analise.evidVSL} bigIdeia={analise.bigIdeiaVSL}/>
+                <EnneaCard tipo={analise.tipoProduto} label="Site do Produto"
+                  evidencias={analise.evidProduto} bigIdeia={analise.bigIdeiaProduto}/>
               </div>
 
-              {/* GAP / ALINHADO */}
               {analise.alinhados ? (
                 <div style={mk.infoCard(T.green)}>
                   <span style={mk.tag(T.green)}>✓ ALINHADOS</span>
@@ -674,9 +620,7 @@ INSTRUÇÕES:
                           transition:"all 0.15s" }}>
                         <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:6 }}>
                           <span style={mk.tag(caminho===c.id ? T.accent : T.muted)}>{c.label}</span>
-                          <span style={{ fontSize:12, fontWeight:700, fontFamily:"sans-serif" }}>
-                            {c.desc}
-                          </span>
+                          <span style={{ fontSize:12, fontWeight:700, fontFamily:"sans-serif" }}>{c.desc}</span>
                         </div>
                         {analise.caminhos?.[c.id] && (
                           <p style={{ fontSize:12, color:T.textSub, fontFamily:"sans-serif", margin:0 }}>
@@ -689,32 +633,23 @@ INSTRUÇÕES:
                 </>
               )}
 
-              {/* C.A.E.S.P.+ */}
               {caesp && (
                 <>
                   <div style={{ height:1, background:T.border, margin:"18px 0" }}/>
                   <div style={{ ...mk.lbl, marginBottom:10 }}>Estrutura C.A.E.S.P.+ extraída da VSL</div>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
                     {[
-                      ["C — Cena", caesp.cena],
-                      ["A — Ação", caesp.acao],
-                      ["E — Espelho", caesp.espelho],
-                      ["S — Solução", caesp.solucao],
-                      ["P — Promessa", caesp.promessa],
-                      ["O — Objeção", caesp.objecao],
-                      ["U — Urgência", caesp.urgencia],
-                      ["Mecanismo", caesp.mecanismo],
+                      ["C — Cena",caesp.cena],["A — Ação",caesp.acao],
+                      ["E — Espelho",caesp.espelho],["S — Solução",caesp.solucao],
+                      ["P — Promessa",caesp.promessa],["O — Objeção",caesp.objecao],
+                      ["U — Urgência",caesp.urgencia],["Mecanismo",caesp.mecanismo],
                     ].map(([k,v]) => (
                       <div key={k} style={{ background:T.surface, borderRadius:8, padding:10,
                         border:`1px solid ${T.border}` }}>
                         <div style={{ fontSize:9, fontWeight:700, color:T.accent,
-                          fontFamily:"sans-serif", letterSpacing:"0.06em", marginBottom:4 }}>
-                          {k}
-                        </div>
+                          fontFamily:"sans-serif", letterSpacing:"0.06em", marginBottom:4 }}>{k}</div>
                         <div style={{ fontSize:11, color:T.textSub, fontFamily:"sans-serif",
-                          lineHeight:1.5 }}>
-                          {v || "—"}
-                        </div>
+                          lineHeight:1.5 }}>{v||"—"}</div>
                       </div>
                     ))}
                   </div>
@@ -722,7 +657,6 @@ INSTRUÇÕES:
               )}
             </div>
 
-            {/* ── CONFIGURAR GERAÇÃO ──────────────────── */}
             <div style={{ ...mk.card(), border:`1px solid ${T.accent}` }}>
               <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:18 }}>
                 <div style={mk.stepNum(`linear-gradient(135deg,${T.green},#27AE60)`)}>4</div>
@@ -737,33 +671,26 @@ INSTRUÇÕES:
               <div style={mk.lbl}>Formato da copy</div>
               <div style={{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:18 }}>
                 {FORMATOS.map(f => (
-                  <button key={f.id} onClick={() => setFormato(f.id)}
-                    style={mk.chip(formato===f.id, T.accent)}>
-                    {f.icon} {f.label}
-                    <span style={{ opacity:0.6, fontSize:11 }}> · {f.desc}</span>
+                  <button key={f.id} onClick={() => setFormato(f.id)} style={mk.chip(formato===f.id, T.accent)}>
+                    {f.icon} {f.label}<span style={{ opacity:0.6, fontSize:11 }}> · {f.desc}</span>
                   </button>
                 ))}
               </div>
 
               <div style={mk.lbl}>
                 Enneagrama de destino{" "}
-                <span style={{ color:T.muted, fontWeight:400, textTransform:"none" }}>
-                  (opcional — padrão: da VSL)
-                </span>
+                <span style={{ color:T.muted, fontWeight:400, textTransform:"none" }}>(opcional)</span>
               </div>
               <div style={{ display:"flex", flexWrap:"wrap", gap:7, marginBottom:20 }}>
                 {Object.entries(ENNEAGRAM).map(([num,e]) => (
-                  <button key={num}
-                    onClick={() => setEnneaDest(enneaDest===+num ? null : +num)}
-                    style={mk.chip(enneaDest===+num, e.cor)}
-                    title={e.driver}>
+                  <button key={num} onClick={() => setEnneaDest(enneaDest===+num ? null : +num)}
+                    style={mk.chip(enneaDest===+num, e.cor)} title={e.driver}>
                     {num} · {e.nome.replace("O ","").replace("A ","")}
                   </button>
                 ))}
               </div>
 
               {erro && <div style={mk.err}>{erro}</div>}
-
               <button onClick={() => gerarCopy(false)}
                 style={mk.btn(`linear-gradient(135deg,${T.accent},${T.accentB})`,"#fff",
                   { padding:"13px 40px", fontSize:14 })}>
@@ -773,7 +700,6 @@ INSTRUÇÕES:
           </div>
         )}
 
-        {/* ══ RESULTADO ════════════════════════════════ */}
         {!loading && copyGerada && fase === 4 && (
           <div className="fu" ref={resultRef}>
             <div style={mk.card()}>
@@ -792,17 +718,12 @@ INSTRUÇÕES:
                 </div>
                 <button onClick={() => copiar(copyGerada)}
                   style={mk.btn(copiado?T.green:T.surface, copiado?"#fff":T.textSub,
-                    { border:`1px solid ${copiado?T.green:T.border}`,
-                      padding:"8px 18px", fontSize:12 })}>
+                    { border:`1px solid ${copiado?T.green:T.border}`, padding:"8px 18px", fontSize:12 })}>
                   {copiado ? "✓ Copiado" : "📋 Copiar"}
                 </button>
               </div>
-
               <div style={{ background:T.surface, border:`1px solid ${T.border}`,
-                borderRadius:10, padding:18 }} className="copybox">
-                {copyGerada}
-              </div>
-
+                borderRadius:10, padding:18 }} className="copybox">{copyGerada}</div>
               <div style={{ display:"flex", gap:10, marginTop:14, flexWrap:"wrap" }}>
                 <button onClick={() => gerarCopy(true)}
                   style={mk.btn(`linear-gradient(135deg,${T.accent},${T.accentB})`,"#fff",
@@ -817,7 +738,6 @@ INSTRUÇÕES:
               </div>
             </div>
 
-            {/* VERSÕES EXTRAS */}
             {versoes.length > 0 && (
               <div>
                 <div style={{ ...mk.lbl, marginBottom:12 }}>Versões adicionais geradas</div>
@@ -825,9 +745,7 @@ INSTRUÇÕES:
                   <div key={i} style={{ ...mk.card(), marginBottom:12 }}>
                     <div style={{ display:"flex", justifyContent:"space-between",
                       alignItems:"center", marginBottom:12 }}>
-                      <span style={mk.tag(T.accent)}>
-                        Versão {i+2} · {v.fmt} · Tipo {v.tipo}
-                      </span>
+                      <span style={mk.tag(T.accent)}>Versão {i+2} · {v.fmt} · Tipo {v.tipo}</span>
                       <button onClick={() => copiar(v.texto)}
                         style={mk.btn(T.surface, T.textSub,
                           { border:`1px solid ${T.border}`, padding:"6px 14px", fontSize:11 })}>
@@ -835,9 +753,7 @@ INSTRUÇÕES:
                       </button>
                     </div>
                     <div style={{ background:T.surface, border:`1px solid ${T.border}`,
-                      borderRadius:10, padding:16 }} className="copybox">
-                      {v.texto}
-                    </div>
+                      borderRadius:10, padding:16 }} className="copybox">{v.texto}</div>
                   </div>
                 ))}
               </div>
