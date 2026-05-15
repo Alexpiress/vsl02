@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 
 const T = {
   bg:"#0A0A0F",surface:"#12121A",card:"#1A1A28",border:"#2A2A40",
@@ -27,6 +27,136 @@ const CAMINHOS=[
   {id:"C",label:"Caminho C",desc:"Enneagrama ponte"},
 ];
 
+// ── STORAGE ───────────────────────────────────────────────
+const STORAGE_KEY = "vsl_transplanter_history";
+function loadHistory() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); }
+  catch { return []; }
+}
+function saveToHistory(entry) {
+  try {
+    const h = loadHistory();
+    h.unshift({ ...entry, id: Date.now(), date: new Date().toLocaleString("pt-BR") });
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(h.slice(0, 50)));
+  } catch(_) {}
+}
+function deleteFromHistory(id) {
+  try {
+    const h = loadHistory().filter(e => e.id !== id);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(h));
+  } catch(_) {}
+}
+
+// ── PDF EXPORT ────────────────────────────────────────────
+async function exportPDF(entry) {
+  // Carrega jsPDF dinamicamente
+  const script = document.createElement("script");
+  script.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+  document.head.appendChild(script);
+  await new Promise(r => { script.onload = r; });
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  const W = 210; const M = 18; const CW = W - M * 2;
+  let y = 20;
+
+  function addLine(h = 4) { y += h; if (y > 270) { doc.addPage(); y = 20; } }
+  function text(txt, x, size = 10, bold = false, color = [30,30,30]) {
+    doc.setFontSize(size);
+    doc.setFont("helvetica", bold ? "bold" : "normal");
+    doc.setTextColor(...color);
+    const lines = doc.splitTextToSize(String(txt || "—"), CW - (x - M));
+    doc.text(lines, x, y);
+    y += lines.length * (size * 0.45) + 1;
+    if (y > 270) { doc.addPage(); y = 20; }
+  }
+  function section(titulo, cor = [80,60,200]) {
+    addLine(4);
+    doc.setFillColor(...cor);
+    doc.roundedRect(M, y - 4, CW, 9, 2, 2, "F");
+    doc.setFontSize(11); doc.setFont("helvetica","bold"); doc.setTextColor(255,255,255);
+    doc.text(titulo, M + 4, y + 1);
+    y += 9; addLine(2);
+  }
+  function campo(label, valor) {
+    doc.setFontSize(8); doc.setFont("helvetica","bold"); doc.setTextColor(100,100,150);
+    doc.text(label.toUpperCase(), M, y); y += 4;
+    text(valor, M, 9.5);
+    addLine(1);
+  }
+
+  // CAPA
+  doc.setFillColor(17,17,27);
+  doc.rect(0, 0, 210, 297, "F");
+  doc.setFillColor(124,92,252);
+  doc.roundedRect(M, 30, CW, 60, 4, 4, "F");
+  doc.setFontSize(22); doc.setFont("helvetica","bold"); doc.setTextColor(255,255,255);
+  doc.text("VSL Transplanter", M + 8, 58);
+  doc.setFontSize(11); doc.setFont("helvetica","normal"); doc.setTextColor(200,200,255);
+  doc.text("Relatório de Análise e Copy", M + 8, 67);
+  doc.setFontSize(9); doc.setTextColor(160,160,200);
+  doc.text(entry.date, M + 8, 78);
+  doc.addPage(); y = 20;
+
+  // PRODUTO
+  section("PRODUTO DE DESTINO", [26,26,40]);
+  campo("Nome", entry.prodNome);
+  campo("URL", entry.prodURL);
+  if (entry.prodExtra) campo("Informações extras", entry.prodExtra);
+
+  // ENNEAGRAMA VSL
+  const ev = ENNEAGRAM[entry.analise?.tipoVSL];
+  section("ENNEAGRAMA — VSL DE REFERÊNCIA", [80,60,200]);
+  campo(`Tipo ${entry.analise?.tipoVSL} — ${ev?.nome || ""}`, "");
+  campo("Big Idea da VSL", entry.analise?.bigIdeiaVSL);
+  campo("Evidências", entry.analise?.evidVSL);
+  campo("Driver", ev?.driver);
+  campo("Gatilhos", ev?.gatilho);
+
+  // ENNEAGRAMA PRODUTO
+  const ep = ENNEAGRAM[entry.analise?.tipoProduto];
+  section("ENNEAGRAMA — PRODUTO", [60,100,160]);
+  campo(`Tipo ${entry.analise?.tipoProduto} — ${ep?.nome || ""}`, "");
+  campo("Big Idea do produto", entry.analise?.bigIdeiaProduto);
+  campo("Evidências", entry.analise?.evidProduto);
+
+  // GAP
+  if (!entry.analise?.alinhados) {
+    section("GAP E OPORTUNIDADE", [180,50,80]);
+    campo("Gap detectado", entry.analise?.gap);
+    campo("Oportunidade", entry.analise?.oportunidade);
+    campo("Caminho A", entry.analise?.caminhos?.A);
+    campo("Caminho B", entry.analise?.caminhos?.B);
+    campo("Caminho C", entry.analise?.caminhos?.C);
+  } else {
+    section("ALINHAMENTO", [40,150,80]);
+    campo("Oportunidade", entry.analise?.oportunidade);
+  }
+
+  // CAESP
+  const c = entry.analise?.caesp;
+  if (c) {
+    section("ESTRUTURA C.A.E.S.P.+", [26,26,40]);
+    campo("C — Cena", c.cena); campo("A — Ação", c.acao);
+    campo("E — Espelho", c.espelho); campo("S — Solução", c.solucao);
+    campo("P — Promessa", c.promessa); campo("O — Objeção", c.objecao);
+    campo("U — Urgência", c.urgencia); campo("Mecanismo", c.mecanismo);
+    campo("Personagem", c.personagem);
+  }
+
+  // COPIES
+  if (entry.copies?.length > 0) {
+    for (const cp of entry.copies) {
+      section(`COPY — ${cp.formato} · Enneagrama Tipo ${cp.tipo}`, [80,60,200]);
+      text(cp.texto, M, 9);
+      addLine(4);
+    }
+  }
+
+  doc.save(`VSL_${entry.prodNome.replace(/\s+/g,"_")}_${entry.id}.pdf`);
+}
+
+// ── API ───────────────────────────────────────────────────
 async function apiAnalisar(payload) {
   const r = await fetch("/api/analyze",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"analisar",payload})});
   const d = await r.json();
@@ -57,13 +187,13 @@ const mk={
   err:{background:"#FF4D6D15",border:`1px solid #FF4D6D40`,borderRadius:10,padding:12,color:T.red,fontSize:13,fontFamily:"sans-serif",marginBottom:12},
 };
 
-function ImageUpload({value,onChange}){
+function ImageUpload({value,onChange,disabled}){
   const ref=useRef();const[over,setOver]=useState(false);
   function handle(file){if(!file||!file.type.startsWith("image/"))return;onChange({file,url:URL.createObjectURL(file)});}
   return(
     <div style={{marginBottom:14}}>
       <label style={mk.lbl}>Printscreen do site (foto da tela)</label>
-      <div className={`dz${over?" over":""}`} onClick={()=>ref.current.click()}
+      <div className={`dz${over?" over":""}`} onClick={()=>!disabled&&ref.current.click()}
         onDragOver={e=>{e.preventDefault();setOver(true);}} onDragLeave={()=>setOver(false)}
         onDrop={e=>{e.preventDefault();setOver(false);handle(e.dataTransfer.files[0]);}}>
         {value?.url?(<div><img src={value.url} alt="p" style={{width:"100%",maxHeight:200,objectFit:"cover",borderRadius:10,border:`1px solid ${T.border}`}}/><div style={{fontSize:11,color:T.muted,fontFamily:"sans-serif",marginTop:8}}>Clique para trocar</div></div>):(
@@ -92,7 +222,67 @@ function EnneaCard({tipo,label,evidencias,bigIdeia}){
   );
 }
 
+// ── TELA DE HISTÓRICO ─────────────────────────────────────
+function Historico({onAbrir,onVoltar}){
+  const[history,setHistory]=useState(loadHistory());
+  function del(id){deleteFromHistory(id);setHistory(loadHistory());}
+  return(
+    <div style={{maxWidth:860,margin:"0 auto",padding:"32px 20px 80px"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:24}}>
+        <div>
+          <div style={{fontSize:18,fontWeight:700}}>Histórico</div>
+          <div style={{fontSize:11,color:T.muted,fontFamily:"sans-serif",marginTop:2}}>{history.length} sessão(ões) salva(s)</div>
+        </div>
+        <button onClick={onVoltar} style={mk.btn("transparent",T.textSub,{border:`1px solid ${T.border}`,padding:"8px 18px",fontSize:12})}>← Voltar</button>
+      </div>
+      {history.length===0?(
+        <div style={{...mk.ic(T.muted),textAlign:"center",padding:40}}>
+          <div style={{fontSize:32,marginBottom:12}}>📋</div>
+          <div style={{fontSize:13,color:T.muted,fontFamily:"sans-serif"}}>Nenhuma sessão salva ainda.</div>
+          <div style={{fontSize:11,color:T.muted,fontFamily:"sans-serif",marginTop:4}}>As sessões são salvas automaticamente após gerar uma copy.</div>
+        </div>
+      ):history.map(entry=>{
+        const ev=ENNEAGRAM[entry.analise?.tipoVSL];
+        const ep=ENNEAGRAM[entry.analise?.tipoProduto];
+        return(
+          <div key={entry.id} style={{...mk.card(),cursor:"pointer"}} onClick={()=>onAbrir(entry)}>
+            <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12}}>
+              <div style={{flex:1}}>
+                <div style={{fontSize:14,fontWeight:700,marginBottom:4}}>{entry.prodNome}</div>
+                <div style={{fontSize:11,color:T.muted,fontFamily:"sans-serif",marginBottom:10}}>{entry.date}</div>
+                <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                  {ev&&<span style={mk.tag(ev.cor)}>VSL: Tipo {entry.analise?.tipoVSL}</span>}
+                  {ep&&<span style={mk.tag(ep.cor)}>Produto: Tipo {entry.analise?.tipoProduto}</span>}
+                  {entry.analise?.alinhados
+                    ?<span style={mk.tag(T.green)}>✓ Alinhados</span>
+                    :<span style={mk.tag(T.red)}>⚡ Gap</span>}
+                  {entry.copies?.length>0&&<span style={mk.tag(T.accent)}>{entry.copies.length} copy(ies)</span>}
+                </div>
+              </div>
+              <div style={{display:"flex",gap:8",flexShrink:0}}>
+                <button onClick={e=>{e.stopPropagation();exportPDF(entry);}}
+                  style={mk.btn(T.surface,T.textSub,{border:`1px solid ${T.border}`,padding:"7px 14px",fontSize:11})}>
+                  📄 PDF
+                </button>
+                <button onClick={e=>{e.stopPropagation();if(confirm("Apagar esta sessão?"))del(entry.id);}}
+                  style={mk.btn(T.surface,T.red,{border:`1px solid ${T.red}40`,padding:"7px 14px",fontSize:11})}>
+                  🗑
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════
+// APP PRINCIPAL
+// ══════════════════════════════════════════════════════════
 export default function App(){
+  const[tela,setTela]=useState("main"); // "main" | "historico"
+  const[sessaoAberta,setSessaoAberta]=useState(null);
   const[modoVSL,setModoVSL]=useState("texto");
   const[vslTexto,setVslTexto]=useState("");
   const[vslLink,setVslLink]=useState("");
@@ -112,10 +302,24 @@ export default function App(){
   const[loading,setLoading]=useState(false);
   const[loadMsg,setLoadMsg]=useState("");
   const[erro,setErro]=useState("");
+  const[histCount,setHistCount]=useState(loadHistory().length);
   const resultRef=useRef(null);
+  // Acumula todas as copies geradas na sessão atual
+  const copiesRef=useRef([]);
 
   function copiar(txt){navigator.clipboard.writeText(txt);setCopiado(true);setTimeout(()=>setCopiado(false),2000);}
-  function resetar(){setFase(1);setAnalise(null);setCAESP(null);setCopyGerada("");setVersoes([]);setErro("");setCaminho(null);setEnneaDest(null);setFormato(null);}
+
+  function resetar(){
+    setFase(1);setAnalise(null);setCAESP(null);
+    setCopyGerada("");setVersoes([]);setErro("");
+    setCaminho(null);setEnneaDest(null);setFormato(null);
+    copiesRef.current=[];
+  }
+
+  function abrirSessao(entry){
+    setSessaoAberta(entry);
+    setTela("sessao");
+  }
 
   async function analisar(){
     setErro("");
@@ -123,22 +327,18 @@ export default function App(){
     if(!transcricao.trim())return setErro("Insira a transcrição ou link da VSL.");
     if(!prodNome.trim())return setErro("Insira o nome do produto.");
     if(!prodURL.trim())return setErro("Insira o URL do produto.");
-    if(!prodPrint&&!prodExtra.trim())return setErro("Adicione o printscreen ou informações extras do produto.");
+    if(!prodPrint&&!prodExtra.trim())return setErro("Adicione o printscreen ou informações extras.");
     setLoading(true);setFase(2);
     try{
       setLoadMsg("Lendo site do produto...");
       let siteTexto="";
       try{const r=await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(prodURL)}`);const d=await r.json();siteTexto=d.contents?.replace(/<[^>]+>/g," ").replace(/\s+/g," ").slice(0,1500)||"";}catch(_){}
-
       let printBase64=null,printMediaType="image/jpeg";
       if(prodPrint?.file){setLoadMsg("Processando printscreen...");printBase64=await fileToBase64(prodPrint.file);printMediaType=prodPrint.file.type||"image/jpeg";}
-
       const siteCtx=[siteTexto?`TEXTO DO SITE:\n${siteTexto}`:"",prodExtra?`EXTRAS:\n${prodExtra}`:""].filter(Boolean).join("\n\n");
-
-      setLoadMsg("Analisando VSL...");
+      setLoadMsg("Analisando VSL e produto...");
       const resultado=await apiAnalisar({transcricao,prodNome,prodURL,siteCtx,printBase64,printMediaType});
-      setAnalise(resultado);
-      setCAESP(resultado.caesp);
+      setAnalise(resultado);setCAESP(resultado.caesp);
       setLoading(false);
     }catch(e){setErro("Erro na análise: "+e.message);setLoading(false);setFase(1);}
   }
@@ -176,19 +376,94 @@ Mini VSL e Social: indicações de cena entre [colchetes].
 VSL Completa: blocos nomeados.
 ESCREVA APENAS A COPY.`;
       const texto=await apiGerar(system,user);
+      const copyEntry={texto,tipo:tipoFinal,formato:fmt?.label};
+      copiesRef.current=[...copiesRef.current,copyEntry];
+
+      // Salva no histórico automaticamente
+      saveToHistory({
+        prodNome,prodURL,prodExtra,
+        vslTexto:vslTexto.slice(0,500),
+        analise,
+        copies:copiesRef.current,
+      });
+      setHistCount(loadHistory().length);
+
       if(novaVersao){setVersoes(v=>[...v,{texto,tipo:tipoFinal,fmt:fmt?.label}]);}
       else{setCopyGerada(texto);setVersoes([]);setFase(4);setTimeout(()=>resultRef.current?.scrollIntoView({behavior:"smooth"}),150);}
     }catch(e){setErro("Erro ao gerar: "+e.message);}
     finally{setLoading(false);setLoadMsg("");}
   }
 
+  // ── TELA HISTÓRICO ───────────────────────────────────
+  if(tela==="historico") return(
+    <div style={{minHeight:"100vh",background:T.bg,color:T.text,fontFamily:"Georgia,serif"}}>
+      <style>{CSS}</style>
+      <div style={{background:`linear-gradient(135deg,${T.surface},#0D0D1A)`,borderBottom:`1px solid ${T.border}`,padding:"20px 28px",display:"flex",alignItems:"center",gap:14}}>
+        <div style={{width:40,height:40,borderRadius:10,flexShrink:0,background:`linear-gradient(135deg,${T.accent},${T.accentB})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>⚡</div>
+        <div><div style={{fontSize:17,fontWeight:700}}>VSL Transplanter</div><div style={{fontSize:11,color:T.muted,fontFamily:"sans-serif",marginTop:2}}>Histórico de sessões</div></div>
+      </div>
+      <Historico onAbrir={abrirSessao} onVoltar={()=>setTela("main")}/>
+    </div>
+  );
+
+  // ── TELA SESSÃO SALVA ────────────────────────────────
+  if(tela==="sessao"&&sessaoAberta) {
+    const s=sessaoAberta;
+    const ev=ENNEAGRAM[s.analise?.tipoVSL];
+    const ep=ENNEAGRAM[s.analise?.tipoProduto];
+    return(
+      <div style={{minHeight:"100vh",background:T.bg,color:T.text,fontFamily:"Georgia,serif"}}>
+        <style>{CSS}</style>
+        <div style={{background:`linear-gradient(135deg,${T.surface},#0D0D1A)`,borderBottom:`1px solid ${T.border}`,padding:"20px 28px",display:"flex",alignItems:"center",gap:14}}>
+          <div style={{width:40,height:40,borderRadius:10,flexShrink:0,background:`linear-gradient(135deg,${T.accent},${T.accentB})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>⚡</div>
+          <div><div style={{fontSize:17,fontWeight:700}}>{s.prodNome}</div><div style={{fontSize:11,color:T.muted,fontFamily:"sans-serif",marginTop:2}}>{s.date}</div></div>
+          <div style={{display:"flex",gap:8,marginLeft:"auto"}}>
+            <button onClick={()=>exportPDF(s)} style={mk.btn(T.accent,"#fff",{padding:"8px 18px",fontSize:12})}>📄 Exportar PDF</button>
+            <button onClick={()=>setTela("historico")} style={mk.btn("transparent",T.textSub,{border:`1px solid ${T.border}`,padding:"8px 18px",fontSize:12})}>← Histórico</button>
+          </div>
+        </div>
+        <div style={{maxWidth:860,margin:"0 auto",padding:"32px 20px 80px"}}>
+          <div style={mk.card()}>
+            <div style={{...mk.lbl,marginBottom:12}}>Enneagrama</div>
+            <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
+              <EnneaCard tipo={s.analise?.tipoVSL} label="VSL de Referência" evidencias={s.analise?.evidVSL} bigIdeia={s.analise?.bigIdeiaVSL}/>
+              <EnneaCard tipo={s.analise?.tipoProduto} label="Produto" evidencias={s.analise?.evidProduto} bigIdeia={s.analise?.bigIdeiaProduto}/>
+            </div>
+          </div>
+          {s.analise?.caesp&&(
+            <div style={mk.card()}>
+              <div style={{...mk.lbl,marginBottom:10}}>C.A.E.S.P.+ extraído da VSL</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                {[["C — Cena",s.analise.caesp.cena],["A — Ação",s.analise.caesp.acao],["E — Espelho",s.analise.caesp.espelho],["S — Solução",s.analise.caesp.solucao],["P — Promessa",s.analise.caesp.promessa],["O — Objeção",s.analise.caesp.objecao],["U — Urgência",s.analise.caesp.urgencia],["Mecanismo",s.analise.caesp.mecanismo]].map(([k,v])=>(
+                  <div key={k} style={{background:T.surface,borderRadius:8,padding:10,border:`1px solid ${T.border}`}}><div style={{fontSize:9,fontWeight:700,color:T.accent,fontFamily:"sans-serif",letterSpacing:"0.06em",marginBottom:4}}>{k}</div><div style={{fontSize:11,color:T.textSub,fontFamily:"sans-serif",lineHeight:1.5}}>{v||"—"}</div></div>
+                ))}
+              </div>
+            </div>
+          )}
+          {s.copies?.map((cp,i)=>(
+            <div key={i} style={mk.card()}>
+              <div style={{...mk.lbl,marginBottom:12}}>Copy {i+1} — {cp.formato} · Tipo {cp.tipo} — {ENNEAGRAM[cp.tipo]?.nome}</div>
+              <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,padding:16}} className="copybox">{cp.texto}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // ── TELA PRINCIPAL ───────────────────────────────────
   return(
     <div style={{minHeight:"100vh",background:T.bg,color:T.text,fontFamily:"Georgia,serif"}}>
       <style>{CSS}</style>
       <div style={{background:`linear-gradient(135deg,${T.surface},#0D0D1A)`,borderBottom:`1px solid ${T.border}`,padding:"20px 28px",display:"flex",alignItems:"center",gap:14}}>
         <div style={{width:40,height:40,borderRadius:10,flexShrink:0,background:`linear-gradient(135deg,${T.accent},${T.accentB})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>⚡</div>
         <div><div style={{fontSize:17,fontWeight:700}}>VSL Transplanter</div><div style={{fontSize:11,color:T.muted,fontFamily:"sans-serif",marginTop:2}}>Engenharia reversa de copy · C.A.E.S.P.+ · Enneagrama · Big Idea</div></div>
-        {fase>1&&<button onClick={resetar} style={mk.btn("transparent",T.textSub,{border:`1px solid ${T.border}`,marginLeft:"auto",padding:"8px 18px",fontSize:12})}>← Reiniciar</button>}
+        <div style={{display:"flex",gap:8,marginLeft:"auto"}}>
+          <button onClick={()=>setTela("historico")} style={mk.btn(T.surface,T.textSub,{border:`1px solid ${T.border}`,padding:"8px 16px",fontSize:12})}>
+            📋 Histórico {histCount>0&&`(${histCount})`}
+          </button>
+          {fase>1&&<button onClick={resetar} style={mk.btn("transparent",T.textSub,{border:`1px solid ${T.border}`,padding:"8px 18px",fontSize:12})}>← Reiniciar</button>}
+        </div>
       </div>
 
       <div style={{maxWidth:860,margin:"0 auto",padding:"32px 20px 80px"}}>
@@ -201,7 +476,7 @@ ESCREVA APENAS A COPY.`;
             <div style={{display:"flex",gap:10,marginBottom:14}}>
               {["texto","link"].map(m=>(<button key={m} disabled={fase>1} onClick={()=>setModoVSL(m)} style={mk.chip(modoVSL===m,T.accent)}>{m==="texto"?"📝 Colar transcrição":"▶ Link YouTube"}</button>))}
             </div>
-            {modoVSL==="texto"?(<><label style={mk.lbl}>Transcrição</label><textarea value={vslTexto} onChange={e=>setVslTexto(e.target.value)} placeholder="Cole o texto completo da VSL..." style={mk.ta(8)} disabled={fase>1}/></>):(<><label style={mk.lbl}>Link YouTube</label><input value={vslLink} onChange={e=>setVslLink(e.target.value)} placeholder="https://www.youtube.com/watch?v=..." style={mk.inp} disabled={fase>1}/><div style={{fontSize:11,color:T.muted,fontFamily:"sans-serif",marginTop:6}}>⚠ Se não funcionar, use Colar transcrição</div></>)}
+            {modoVSL==="texto"?(<><label style={mk.lbl}>Transcrição</label><textarea value={vslTexto} onChange={e=>setVslTexto(e.target.value)} placeholder="Cole o texto completo da VSL..." style={mk.ta(8)} disabled={fase>1}/></>):(<><label style={mk.lbl}>Link YouTube</label><input value={vslLink} onChange={e=>setVslLink(e.target.value)} placeholder="https://www.youtube.com/watch?v=..." style={mk.inp} disabled={fase>1}/><div style={{fontSize:11,color:T.muted,fontFamily:"sans-serif",marginTop:6}}>⚠ Se não funcionar use Colar transcrição</div></>)}
           </div>
 
           <div style={mk.card()}>
@@ -284,7 +559,11 @@ ESCREVA APENAS A COPY.`;
                   <div style={{...mk.sn(`linear-gradient(135deg,${T.gold},#E6AC00)`),color:"#1A1A00"}}>✓</div>
                   <div><div style={{fontSize:14,fontWeight:700}}>Copy Gerada</div><div style={{fontSize:11,color:T.muted,fontFamily:"sans-serif",marginTop:2}}>{FORMATOS.find(f=>f.id===formato)?.label} · Tipo {enneaDest||analise?.tipoVSL} — {ENNEAGRAM[enneaDest||analise?.tipoVSL]?.nome}</div></div>
                 </div>
-                <button onClick={()=>copiar(copyGerada)} style={mk.btn(copiado?T.green:T.surface,copiado?"#fff":T.textSub,{border:`1px solid ${copiado?T.green:T.border}`,padding:"8px 18px",fontSize:12})}>{copiado?"✓ Copiado":"📋 Copiar"}</button>
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={()=>exportPDF({prodNome,prodURL,prodExtra,analise,copies:copiesRef.current,date:new Date().toLocaleString("pt-BR"),id:Date.now()})}
+                    style={mk.btn(T.surface,T.textSub,{border:`1px solid ${T.border}`,padding:"7px 14px",fontSize:12})}>📄 PDF</button>
+                  <button onClick={()=>copiar(copyGerada)} style={mk.btn(copiado?T.green:T.surface,copiado?"#fff":T.textSub,{border:`1px solid ${copiado?T.green:T.border}`,padding:"7px 14px",fontSize:12})}>{copiado?"✓ Copiado":"📋 Copiar"}</button>
+                </div>
               </div>
               <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,padding:18}} className="copybox">{copyGerada}</div>
               <div style={{display:"flex",gap:10,marginTop:14,flexWrap:"wrap"}}>
